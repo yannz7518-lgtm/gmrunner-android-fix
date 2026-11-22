@@ -1,0 +1,75 @@
+name: Build gmRunner Android Touch Fix
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout patch repository
+        uses: actions/checkout@v4
+
+      - name: Clone upstream gmRunner
+        run: git clone --depth 1 https://github.com/KliffDesaix/gmrunner.git upstream
+
+      - name: Download SDL2 source
+        run: |
+          mkdir -p upstream/third_party
+          curl -L https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-2.32.10.tar.gz -o /tmp/sdl.tar.gz
+          tar -xzf /tmp/sdl.tar.gz
+          mv SDL2-2.32.10 upstream/third_party/SDL2
+
+      - name: Apply Android touch classification patch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('upstream/src/platform/sdl/HostInput.cpp')
+          s = p.read_text()
+          old = '''bool isTouchscreen(SDL_TouchID id) {
+          #if SDL_VERSION_ATLEAST(2, 0, 10)
+              return SDL_GetTouchDeviceType(id) == SDL_TOUCH_DEVICE_DIRECT;
+          #else
+              (void)id;
+              return true;
+          #endif
+          }'''
+          new = '''bool isTouchscreen(SDL_TouchID id) {
+          #if defined(__ANDROID__)
+              // Android touch metadata may be misreported by SDL; accept finger events.
+              (void)id;
+              return true;
+          #elif SDL_VERSION_ATLEAST(2, 0, 10)
+              return SDL_GetTouchDeviceType(id) == SDL_TOUCH_DEVICE_DIRECT;
+          #else
+              (void)id;
+              return true;
+          #endif
+          }'''
+          if old not in s:
+              raise SystemExit('Could not locate isTouchscreen() function; patch aborted safely.')
+          p.write_text(s.replace(old, new, 1))
+          PY
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;26.3.11579264" "cmake;3.22.1"
+
+      - name: Build debug APK
+        working-directory: upstream/android
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gmrunner-android-touchfix-debug
+          path: upstream/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

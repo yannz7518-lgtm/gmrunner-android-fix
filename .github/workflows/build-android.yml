@@ -79,12 +79,12 @@ jobs:
               "draw declaration")
 
           sub("src/platform/sdl/TouchPad.cpp",
-              r'^\s*\{-1, x0 \+ m \+ R, y1 - m - R, R, ""\},$',
+              r'^[ \t]*\{-1, x0 \+ m \+ R, y1 - m - R, R, ""\},$',
               lambda m: '        {GP_PADL, x0 + m + rb, y1 - m - rb, rb, "<"},\n        {GP_PADR, x0 + m + 3.35 * rb, y1 - m - rb, rb, ">"},',
               "replace d-pad with left/right buttons")
 
           sub("src/platform/sdl/TouchPad.cpp",
-              r'^\s*\{GP_SHOULDERL, x0 \+ m \+ 0\.06 \* s, y0 \+ m \+ 0\.06 \* s, 0\.06 \* s, "L"\},$',
+              r'^[ \t]*\{GP_SHOULDERL, x0 \+ m \+ 0\.06 \* s, y0 \+ m \+ 0\.06 \* s, 0\.06 \* s, "L"\},$',
               '        {GP_SHOULDERL, x0 + m + 0.06 * s, y0 + m + 0.06 * s, 0.06 * s, "CTRL"},',
               "label control key")
 
@@ -94,17 +94,17 @@ jobs:
               "remove d-pad sector logic")
 
           sub("src/platform/sdl/TouchPad.cpp",
-              r'(?m)^\s*if \(c\.button >= 0\) \{\n\s*want\[c\.button\] = true;\n\s*\} else \{.*?^\s*\}',
-              lambda m: re.match(r"^\s*", m.group(0)).group(0) + "want[c.button] = true;",
+              r'(?m)^[ \t]*if \(c\.button >= 0\) \{\n[ \t]*want\[c\.button\] = true;\n[ \t]*\} else \{.*?^[ \t]*\}',
+              lambda m: re.match(r"^[ \t]*", m.group(0)).group(0) + "want[c.button] = true;",
               "touch input handling")
 
           sub("src/platform/sdl/TouchPad.cpp",
-              r'(?m)^\s*if \(c\.button < 0\) \{.*?^\s*bool on = down\[c\.button\];',
-              lambda m: re.match(r"^\s*", m.group(0)).group(0) + "bool on = down[c.button];",
+              r'(?m)^[ \t]*if \(c\.button < 0\) \{.*?^[ \t]*bool on = down\[c\.button\];',
+              lambda m: re.match(r"^[ \t]*", m.group(0)).group(0) + "bool on = down[c.button];",
               "render directional buttons")
 
           sub("src/platform/sdl/TouchPad.cpp",
-              r'(?m)^void TouchPad::draw\(Renderer& r, int w, int h\) \{\n\s*if \(!visible\) return;',
+              r'(?m)^void TouchPad::draw\(Renderer& r, int w, int h\) \{\n[ \t]*if \(!visible\) return;',
               "void TouchPad::draw(Renderer& r, int w, int h, double fps, bool showFps) {\n    if (!visible && !showFps) return;",
               "draw FPS arguments")
 

@@ -62,102 +62,68 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           root = Path("gmrunner")
-          def replace(path, old, new):
+          def sub(path, pattern, replacement, label):
               p = root / path
               s = p.read_text()
-              if old not in s:
-                  raise SystemExit(f"Patch target missing in {path}: {old[:80]!r}")
-              p.write_text(s.replace(old, new, 1))
+              s, n = re.subn(pattern, replacement, s, count=1, flags=re.MULTILINE | re.DOTALL)
+              if n != 1:
+                  raise SystemExit(f"Patch failed ({label}) in {path}: matched {n}")
+              p.write_text(s)
 
-          replace("src/platform/sdl/Host.h",
-              "    void draw(Renderer& r, int screenW, int screenH);",
-              "    void draw(Renderer& r, int screenW, int screenH, double fps = 0.0, bool showFps = false);")
+          sub("src/platform/sdl/Host.h",
+              r"^    void draw\(Renderer& r, int screenW, int screenH\);$",
+              "    void draw(Renderer& r, int screenW, int screenH, double fps = 0.0, bool showFps = false);",
+              "draw declaration")
 
-          replace("src/platform/sdl/TouchPad.cpp",
-              '''        {-1, x0 + m + R, y1 - m - R, R, ""},''',
-              '''        {GP_PADL, x0 + m + rb, y1 - m - rb, rb, "<"},
-                  {GP_PADR, x0 + m + 3.35 * rb, y1 - m - rb, rb, ">"},''')
+          sub("src/platform/sdl/TouchPad.cpp",
+              r'^\s*\{-1, x0 \+ m \+ R, y1 - m - R, R, ""\},$',
+              lambda m: '        {GP_PADL, x0 + m + rb, y1 - m - rb, rb, "<"},\n        {GP_PADR, x0 + m + 3.35 * rb, y1 - m - rb, rb, ">"},',
+              "replace d-pad with left/right buttons")
 
-          replace("src/platform/sdl/TouchPad.cpp",
-              '''        {GP_SHOULDERL, x0 + m + 0.06 * s, y0 + m + 0.06 * s, 0.06 * s, "L"},''',
-              '''        {GP_SHOULDERL, x0 + m + 0.06 * s, y0 + m + 0.06 * s, 0.06 * s, "CTRL"},''')
+          sub("src/platform/sdl/TouchPad.cpp",
+              r'^\s*\{GP_SHOULDERL, x0 \+ m \+ 0\.06 \* s, y0 \+ m \+ 0\.06 \* s, 0\.06 \* s, "L"\},$',
+              '        {GP_SHOULDERL, x0 + m + 0.06 * s, y0 + m + 0.06 * s, 0.06 * s, "CTRL"},',
+              "label control key")
 
-          replace("src/platform/sdl/TouchPad.cpp",
-              '''// The d-pad directions a point presses: 8 sectors of 45 degrees, nothing in the middle.
-          void dpadDirs(const Control& c, double x, double y, bool out[4]) {
-              double dx = x - c.x, dy = y - c.y, dist = std::hypot(dx, dy);
-              out[0] = out[1] = out[2] = out[3] = false;
-              if (dist < 0.2 * c.r) return;
-              out[0] = dx < -0.38 * dist;  // left
-              out[1] = dx > 0.38 * dist;   // right
-              out[2] = dy < -0.38 * dist;   // up
-              out[3] = dy > 0.38 * dist;   // down
-          }
+          sub("src/platform/sdl/TouchPad.cpp",
+              r'(?m)^// The d-pad directions.*?^const int kDpadButtons\[4\] = \{GP_PADL, GP_PADR, GP_PADU, GP_PADD\};\n\n',
+              "",
+              "remove d-pad sector logic")
 
-          const int kDpadButtons[4] = {GP_PADL, GP_PADR, GP_PADU, GP_PADD};
+          sub("src/platform/sdl/TouchPad.cpp",
+              r'(?m)^\s*if \(c\.button >= 0\) \{\n\s*want\[c\.button\] = true;\n\s*\} else \{.*?^\s*\}',
+              lambda m: re.match(r"^\s*", m.group(0)).group(0) + "want[c.button] = true;",
+              "touch input handling")
 
-          ''',
-              "")
+          sub("src/platform/sdl/TouchPad.cpp",
+              r'(?m)^\s*if \(c\.button < 0\) \{.*?^\s*bool on = down\[c\.button\];',
+              lambda m: re.match(r"^\s*", m.group(0)).group(0) + "bool on = down[c.button];",
+              "render directional buttons")
 
-          replace("src/platform/sdl/TouchPad.cpp",
-              '''        if (c.button >= 0) {
-              want[c.button] = true;
-          } else {
-              bool dirs[4];
-              dpadDirs(c, fingers[i].x, fingers[i].y, dirs);
-              for (int k = 0; k < 4; k++)
-                  if (dirs[k]) want[kDpadButtons[k]] = true;
-          }''',
-              '''        want[c.button] = true;''')
+          sub("src/platform/sdl/TouchPad.cpp",
+              r'(?m)^void TouchPad::draw\(Renderer& r, int w, int h\) \{\n\s*if \(!visible\) return;',
+              "void TouchPad::draw(Renderer& r, int w, int h, double fps, bool showFps) {\n    if (!visible && !showFps) return;",
+              "draw FPS arguments")
 
-          replace("src/platform/sdl/TouchPad.cpp",
-              '''        if (c.button < 0) {  // d-pad: a cross on a disc, the pressed arms lit
-              p.circle(c.x, c.y, c.r, dark, 0.25);
-              double a = c.r * 0.34, l = c.r * 0.86;
-              p.rect(c.x - l, c.y - a / 2, 2 * l, a, white, 0.30);
-              p.rect(c.x - a / 2, c.y - l, a, 2 * l, white, 0.30);
-              const double ax[4] = {-1, 1, 0, 0}, ay[4] = {0, 0, -1, 1};
-              for (int k = 0; k < 4; k++)
-                  if (down[kDpadButtons[k]])
-                      p.rect(c.x + ax[k] * l * 0.55 - a / 2, c.y + ay[k] * l * 0.55 - a / 2, a, a, white, 0.6);
-              continue;
-          }
-          bool on = down[c.button];''',
-              '''        bool on = down[c.button];''')
+          sub("src/platform/sdl/TouchPad.cpp",
+              r'(?m)^    for \(auto& c : layout\(w, h, inset, buttons \? buttons->maps\[0\]\.onScreen : nullptr\)\) \{',
+              "    if (visible) for (auto& c : layout(w, h, inset, buttons ? buttons->maps[0].onScreen : nullptr)) {",
+              "hide controls when controls disabled")
 
-          replace("src/platform/sdl/TouchPad.cpp",
-              '''void TouchPad::draw(Renderer& r, int w, int h) {
-              if (!visible) return;''',
-              '''void TouchPad::draw(Renderer& r, int w, int h, double fps, bool showFps) {
-              if (!visible && !showFps) return;''')
+          sub("src/platform/sdl/TouchPad.cpp",
+              r'(?m)^    \}\n\}\n\n}  // namespace gm::host$',
+              '    }\n    if (showFps) {\n        const std::string label = std::to_string(static_cast<int>(std::round(fps))) + " FPS";\n        p.text(inset[0] + 8, inset[1] + 8, std::max(2.0, std::min(w, h) * 0.004), label, white, 0.85);\n    }\n}\n\n}  // namespace gm::host',
+              "FPS text")
 
-          replace("src/platform/sdl/TouchPad.cpp",
-              '''    for (auto& c : layout(w, h, inset, buttons ? buttons->maps[0].onScreen : nullptr)) {''',
-              '''    if (visible) for (auto& c : layout(w, h, inset, buttons ? buttons->maps[0].onScreen : nullptr)) {''')
+          sub("src/platform/sdl/Main.cpp",
+              r'(?m)^        rt->gfx->screenOverlay = \[&input\]\(Renderer& r, int w, int h\) \{\n            input\.touchPad\.draw\(r, w, h\);',
+              '        rt->gfx->screenOverlay = [&input, &rt, &opt](Renderer& r, int w, int h) {\n            input.touchPad.draw(r, w, h, rt ? rt->fpsReal : 0.0, opt.showFps);',
+              "overlay FPS data")
 
-          replace("src/platform/sdl/TouchPad.cpp",
-              '''    }
-          }
-
-          }  // namespace gm::host''',
-              '''    }
-              if (showFps) {
-                  const std::string label = std::to_string(static_cast<int>(std::round(fps))) + " FPS";
-                  p.text(inset[0] + 8, inset[1] + 8, std::max(2.0, std::min(w, h) * 0.004), label, white, 0.85);
-              }
-          }
-
-          }  // namespace gm::host''')
-
-          replace("src/platform/sdl/Main.cpp",
-              '''        rt->gfx->screenOverlay = [&input](Renderer& r, int w, int h) {
-              input.touchPad.draw(r, w, h);''',
-              '''        rt->gfx->screenOverlay = [&input, &rt, &opt](Renderer& r, int w, int h) {
-              input.touchPad.draw(r, w, h, rt ? rt->fpsReal : 0.0, opt.showFps);''')
-
-          print("Applied Android-specific touch/FPS patch.")
+          print("Applied Tag After School controls and FPS overlay patch.")
           PY
 
       - name: Build debug APK

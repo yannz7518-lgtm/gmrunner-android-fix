@@ -58,6 +58,90 @@ jobs:
       - name: Apply app display name
         run: sed -i 's/android:label="gmRunner"/android:label="Tag After School"/' gmrunner/android/app/src/main/AndroidManifest.xml
 
+      - name: Apply Tag After School touch controls and simple FPS overlay
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path("gmrunner")
+          def replace(path, old, new):
+              p = root / path
+              s = p.read_text()
+              if old not in s:
+                  raise SystemExit(f"Patch target missing in {path}: {old[:80]!r}")
+              p.write_text(s.replace(old, new, 1))
+
+          replace("src/platform/sdl/Host.h",
+              "    void draw(Renderer& r, int screenW, int screenH);",
+              "    void draw(Renderer& r, int screenW, int screenH, double fps = 0.0, bool showFps = false);")
+
+          replace("src/platform/sdl/TouchPad.cpp",
+              "        {-1, x0 + m + R, y1 - m - R, R, \"\\"},",
+              "        {GP_PADL, x0 + m + rb, y1 - m - rb, rb, \"<\"},\n        {GP_PADR, x0 + m + 3.35 * rb, y1 - m - rb, rb, \"\>\"},")
+
+          replace("src/platform/sdl/TouchPad.cpp",
+              "        {GP_SHOULDERL, x0 + m + 0.06 * s, y0 + m + 0.06 * s, 0.06 * s, \"L\"},",
+              "        {GP_SHOULDERL, x0 + m + 0.06 * s, y0 + m + 0.06 * s, 0.06 * s, \"CTRL\"},")
+
+          old_dirs = """// The d-pad directions a point presses: 8 sectors of 45 degrees, nothing in the middle.
+          void dpadDirs(const Control& c, double x, double y, bool out[4]) {
+              double dx = x - c.x, dy = y - c.y, dist = std::hypot(dx, dy);
+              out[0] = out[1] = out[2] = out[3] = false;
+              if (dist < 0.2 * c.r) return;
+              out[0] = dx < -0.38 * dist;  // left
+              out[1] = dx > 0.38 * dist;   // right
+              out[2] = dy < -0.38 * dist;   // up
+              out[3] = dy > 0.38 * dist;   // down
+          }
+
+          const int kDpadButtons[4] = {GP_PADL, GP_PADR, GP_PADU, GP_PADD};
+
+          """
+          replace("src/platform/sdl/TouchPad.cpp", old_dirs, "")
+
+          old_logic = """        if (c.button >= 0) {
+                  want[c.button] = true;
+              } else {
+                  bool dirs[4];
+                  dpadDirs(c, fingers[i].x, fingers[i].y, dirs);
+                  for (int k = 0; k < 4; k++)
+                      if (dirs[k]) want[kDpadButtons[k]] = true;
+              }"""
+          replace("src/platform/sdl/TouchPad.cpp", old_logic, "        want[c.button] = true;")
+
+          old_draw = """        if (c.button < 0) {  // d-pad: a cross on a disc, the pressed arms lit
+                  p.circle(c.x, c.y, c.r, dark, 0.25);
+                  double a = c.r * 0.34, l = c.r * 0.86;
+                  p.rect(c.x - l, c.y - a / 2, 2 * l, a, white, 0.30);
+                  p.rect(c.x - a / 2, c.y - l, a, 2 * l, white, 0.30);
+                  const double ax[4] = {-1, 1, 0, 0}, ay[4] = {0, 0, -1, 1};
+                  for (int k = 0; k < 4; k++)
+                      if (down[kDpadButtons[k]])
+                          p.rect(c.x + ax[k] * l * 0.55 - a / 2, c.y + ay[k] * l * 0.55 - a / 2, a, a, white, 0.6);
+                  continue;
+              }
+              bool on = down[c.button];"""
+          replace("src/platform/sdl/TouchPad.cpp", old_draw, "        bool on = down[c.button];")
+
+          replace("src/platform/sdl/TouchPad.cpp",
+              "void TouchPad::draw(Renderer& r, int w, int h) {\n    if (!visible) return;",
+              "void TouchPad::draw(Renderer& r, int w, int h, double fps, bool showFps) {\n    if (!visible && !showFps) return;")
+
+          replace("src/platform/sdl/TouchPad.cpp",
+              "    for (auto& c : layout(w, h, inset, buttons ? buttons->maps[0].onScreen : nullptr)) {",
+              "    if (visible) for (auto& c : layout(w, h, inset, buttons ? buttons->maps[0].onScreen : nullptr)) {")
+
+          replace("src/platform/sdl/TouchPad.cpp",
+              "    }\n}\n\n}  // namespace gm::host",
+              "    }\n    if (showFps) {\n        const std::string label = std::to_string(static_cast<int>(std::round(fps))) + \" FPS\";\n        p.text(inset[0] + 8, inset[1] + 8, std::max(2.0, std::min(w, h) * 0.004), label, white, 0.85);\n    }\n}\n\n}  // namespace gm::host")
+
+          replace("src/platform/sdl/Main.cpp",
+              "        rt->gfx->screenOverlay = [&input](Renderer& r, int w, int h) {\n            input.touchPad.draw(r, w, h);",
+              "        rt->gfx->screenOverlay = [&input, &rt, &opt](Renderer& r, int w, int h) {\n            input.touchPad.draw(r, w, h, rt ? rt->fpsReal : 0.0, opt.showFps);")
+
+          print("Applied Android-specific touch/FPS patch.")
+          PY
+
       - name: Build debug APK
         working-directory: gmrunner/android
         run: |
@@ -71,6 +155,7 @@ jobs:
           title = Tag After School
           touch_controls = on
           menu_shortcut = back
+          show_fps = yes
           EOF
           cat > dist/INSTALL.txt <<'EOF'
           INSTALL:

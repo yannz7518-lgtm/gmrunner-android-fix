@@ -57,14 +57,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK and install required packages
-        uses: android-actions/setup-android@v3
+      - name: Set up Android SDK tools
+        uses: android-actions/setup-android@v4
         with:
-          packages: |
-            platforms;android-36
-            build-tools;36.0.0
-            ndk;26.3.11579264
-            cmake;3.22.1
+          packages: ''
+
+      - name: Install required Android SDK components
+        run: |
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;26.3.11579264" "cmake;3.22.1"
 
       - name: Verify Android SDK installation
         run: |

@@ -1,0 +1,79 @@
+name: Build Tag After School Android launcher
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout launcher configuration
+        uses: actions/checkout@v4
+
+      - name: Checkout gmRunner runtime
+        uses: actions/checkout@v4
+        with:
+          repository: KliffDesaix/gmrunner
+          path: gmrunner
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build dependencies
+        run: |
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;26.3.11579264" "cmake;3.22.1"
+
+      - name: Download SDL2 source
+        run: |
+          mkdir -p gmrunner/third_party
+          curl -fL --retry 3 https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-2.32.10.zip -o /tmp/sdl2.zip
+          unzip -q /tmp/sdl2.zip -d /tmp/sdl2
+          mv /tmp/sdl2/SDL2-2.32.10 gmrunner/third_party/SDL2
+
+      - name: Apply app display name
+        run: |
+          sed -i 's/android:label="gmRunner"/android:label="Tag After School"/' gmrunner/android/app/src/main/AndroidManifest.xml
+
+      - name: Build debug APK
+        working-directory: gmrunner/android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Prepare game folder template
+        run: |
+          mkdir -p dist/TagAfterSchool
+          cat > dist/TagAfterSchool/gmrunner.ini <<'EOF'
+          title = Tag After School
+          touch_controls = on
+          menu_shortcut = back
+          EOF
+          cat > dist/INSTALL.txt <<'EOF'
+          1) Install TagAfterSchool-Android.apk.
+          2) Extract your game files into internal storage/gmrunner/Tag After School/
+             so data.win is at /storage/emulated/0/gmrunner/Tag After School/data.win.
+          3) Keep any additional game files beside data.win.
+          4) Open the app and grant All files access if Android asks.
+          5) Tap the game entry to launch. If it fails, share gmrunner.log.
+          EOF
+          cp gmrunner/android/app/build/outputs/apk/debug/app-debug.apk dist/TagAfterSchool-Android.apk
+
+      - name: Upload APK and setup template
+        uses: actions/upload-artifact@v4
+        with:
+          name: TagAfterSchool-Android-build
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14

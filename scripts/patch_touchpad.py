@@ -9,8 +9,8 @@ new = """struct TouchPad {
     bool visible = false;
     bool editMode = false, layoutLoaded = false;
     double sizeScale = 1.0;
-    double customX[GP_BUTTON_COUNT] = {}, customY[GP_BUTTON_COUNT] = {};
-    bool custom[GP_BUTTON_COUNT] = {};
+    double customX[GP_BUTTON_COUNT + 1] = {}, customY[GP_BUTTON_COUNT + 1] = {};
+    bool custom[GP_BUTTON_COUNT + 1] = {};
     void loadLayout();
     void saveLayout();"""
 if old not in s:
@@ -21,6 +21,7 @@ new = "    void draw(Renderer& r, int screenW, int screenH, double fps = 0.0, bo
 if old not in s:
     raise SystemExit("TouchPad draw declaration not found")
 s = s.replace(old, new, 1)
+s = s.replace('bool down[GP_BUTTON_COUNT] = {};', 'bool down[GP_BUTTON_COUNT + 1] = {};', 1)
 host.write_text(s)
 
 touch = r'''// Editable on-screen controller for Android/touchscreen targets.
@@ -63,6 +64,7 @@ std::vector<Control> layout(int w, int h, const double inset[4], const bool* sho
         {GP_SHOULDERR, x1 - m - 0.06 * s, y0 + m + 0.06 * s, 0.06 * s * pad.sizeScale, "R"},
         {GP_SELECT, (x0 + x1) / 2 - 0.09 * s, sy, 0.045 * s * pad.sizeScale, "SEL"},
         {GP_START, (x0 + x1) / 2 + 0.09 * s, sy, 0.045 * s * pad.sizeScale, "START"},
+        {GP_BUTTON_COUNT, x0 + m + 0.36 * s, y1 - m - 0.075 * s, rb * 0.82, "FLASH"},
     };
     for (auto& c : all) {
         if (c.button >= 0 && pad.custom[c.button]) {
@@ -73,8 +75,20 @@ std::vector<Control> layout(int w, int h, const double inset[4], const bool* sho
     if (!shown) return all;
     std::vector<Control> result;
     for (auto& c : all)
-        if (shown[c.button]) result.push_back(c);
+        if (c.button == GP_BUTTON_COUNT || shown[c.button]) result.push_back(c);
     return result;
+}
+
+void sendFlashlightKey(bool down) {
+    SDL_Event ev{};
+    ev.type = down ? SDL_KEYDOWN : SDL_KEYUP;
+    ev.key.type = ev.type;
+    ev.key.state = down ? SDL_PRESSED : SDL_RELEASED;
+    ev.key.repeat = 0;
+    ev.key.keysym.scancode = SDL_SCANCODE_F;
+    ev.key.keysym.sym = SDLK_f;
+    ev.key.keysym.mod = KMOD_NONE;
+    SDL_PushEvent(&ev);
 }
 
 int hit(const std::vector<Control>& cs, double x, double y) {
@@ -106,7 +120,7 @@ void TouchPad::loadLayout() {
     int button = 0;
     double x = 0, y = 0;
     while (std::fscanf(f, "%d %lf %lf", &button, &x, &y) == 3) {
-        if (button >= 0 && button < GP_BUTTON_COUNT && x >= 0 && x <= 1 && y >= 0 && y <= 1) {
+        if (button >= 0 && button <= GP_BUTTON_COUNT && x >= 0 && x <= 1 && y >= 0 && y <= 1) {
             custom[button] = true;
             customX[button] = x;
             customY[button] = y;
@@ -123,7 +137,7 @@ void TouchPad::saveLayout() {
     FILE* f = std::fopen(path.c_str(), "w");
     if (!f) return;
     std::fprintf(f, "%.4f\n", sizeScale);
-    for (int i = 0; i < GP_BUTTON_COUNT; ++i)
+    for (int i = 0; i < GP_BUTTON_COUNT + 1; ++i)
         if (custom[i]) std::fprintf(f, "%d %.6f %.6f\n", i, customX[i], customY[i]);
     std::fclose(f);
 }
@@ -133,10 +147,10 @@ bool TouchPad::handleFinger(const SDL_TouchFingerEvent& e, Runner& rt, int w, in
     loadLayout();
     double x = e.x * w, y = e.y * h;
     // Small top-right toolbar: EDIT toggles layout mode; +/- resize all controls.
-    if (e.type == SDL_FINGERDOWN && y < 64 && x > w - 154) {
-        if (x > w - 62) editMode = !editMode;
-        else if (editMode && x > w - 105) sizeScale = std::min(1.8, sizeScale + 0.1);
-        else if (editMode) sizeScale = std::max(0.65, sizeScale - 0.1);
+    if (e.type == SDL_FINGERDOWN && y < 58 && x > w - 224) {
+        if (x > w - 116) editMode = !editMode;
+        else if (editMode && x > w - 190) sizeScale = std::max(0.65, sizeScale - 0.1);
+        else if (editMode) sizeScale = std::min(1.8, sizeScale + 0.1);
         saveLayout();
         return true;
     }
@@ -180,26 +194,28 @@ bool TouchPad::handleFinger(const SDL_TouchFingerEvent& e, Runner& rt, int w, in
         if (c >= 0) f->control = c;
     }
 
-    bool want[GP_BUTTON_COUNT] = {};
+    bool want[GP_BUTTON_COUNT + 1] = {};
     for (auto& fi : fingers) {
         if (!fi.used) continue;
         const Control& c = cs[static_cast<size_t>(fi.control)];
         want[c.button] = true;
     }
-    for (int b = 0; b < GP_BUTTON_COUNT; ++b)
+    for (int b = 0; b < GP_BUTTON_COUNT + 1; ++b)
         if (want[b] != down[b]) {
             down[b] = want[b];
-            if (buttons) buttons->press(rt, Buttons::kOnScreen, b, want[b]);
+            if (b == GP_BUTTON_COUNT) sendFlashlightKey(want[b]);
+            else if (buttons) buttons->press(rt, Buttons::kOnScreen, b, want[b]);
         }
     return true;
 }
 
 void TouchPad::releaseAll(Runner& rt) {
     for (auto& f : fingers) f.used = false;
-    for (int b = 0; b < GP_BUTTON_COUNT; ++b)
+    for (int b = 0; b < GP_BUTTON_COUNT + 1; ++b)
         if (down[b]) {
             down[b] = false;
-            if (buttons) buttons->press(rt, Buttons::kOnScreen, b, false);
+            if (b == GP_BUTTON_COUNT) sendFlashlightKey(false);
+            else if (buttons) buttons->press(rt, Buttons::kOnScreen, b, false);
         }
 }
 
@@ -219,20 +235,19 @@ void TouchPad::draw(Renderer& r, int w, int h, double fps, bool showFps) {
             p.textCentered(c.x, c.y, px, c.label, white, on ? 0.95 : 0.7);
         }
         double s = std::min(w, h);
-        double ty = std::max(18.0, s * 0.035);
-        p.circle(w - 38, 30, 25, dark, 0.55);
-        p.textCentered(w - 38, 30, std::max(2.0, s * 0.009), editMode ? "ON" : "EDIT", white, 0.95);
+        p.rect(w - 116, 8, 108, 42, dark, 0.62);
+        p.frame(w - 116, 8, 108, 42, 1.5, white, 0.65);
+        p.textCentered(w - 62, 29, std::max(2.0, s * 0.0055), editMode ? "DONE" : "EDIT", white, 0.95);
         if (editMode) {
-            p.circle(w - 88, 30, 20, dark, 0.55);
-            p.textCentered(w - 88, 30, std::max(2.0, s * 0.012), "-", white, 0.95);
-            p.circle(w - 132, 30, 20, dark, 0.55);
-            p.textCentered(w - 132, 30, std::max(2.0, s * 0.012), "+", white, 0.95);
+            p.circle(w - 166, 29, 19, dark, 0.62);
+            p.textCentered(w - 166, 29, std::max(2.0, s * 0.009), "-", white, 0.95);
+            p.circle(w - 212, 29, 19, dark, 0.62);
+            p.textCentered(w - 212, 29, std::max(2.0, s * 0.009), "+", white, 0.95);
         }
-        (void)ty;
     }
     if (showFps) {
         const std::string label = std::to_string(static_cast<int>(std::round(fps))) + " FPS";
-        p.text(10, 10, std::max(2.0, std::min(w, h) * 0.004), label, white, 0.9);
+        p.text(18, 16, std::max(2.0, std::min(w, h) * 0.004), label, white, 0.9);
     }
 }
 }  // namespace gm::host

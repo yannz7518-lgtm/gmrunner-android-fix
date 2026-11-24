@@ -9,8 +9,8 @@ new = """struct TouchPad {
     bool visible = false;
     bool editMode = false, layoutLoaded = false;
     double sizeScale = 1.0;
-    double customX[GP_BUTTON_COUNT + 1] = {}, customY[GP_BUTTON_COUNT + 1] = {};
-    bool custom[GP_BUTTON_COUNT + 1] = {};
+    double customX[GP_BUTTON_COUNT + 3] = {}, customY[GP_BUTTON_COUNT + 3] = {};
+    bool custom[GP_BUTTON_COUNT + 3] = {};
     void loadLayout();
     void saveLayout();"""
 if old not in s:
@@ -21,7 +21,7 @@ new = "    void draw(Renderer& r, int screenW, int screenH, double fps = 0.0, bo
 if old not in s:
     raise SystemExit("TouchPad draw declaration not found")
 s = s.replace(old, new, 1)
-s = s.replace('bool down[GP_BUTTON_COUNT] = {};', 'bool down[GP_BUTTON_COUNT + 1] = {};', 1)
+s = s.replace('bool down[GP_BUTTON_COUNT] = {};', 'bool down[GP_BUTTON_COUNT + 3] = {};', 1)
 host.write_text(s)
 
 touch = r'''// Editable on-screen controller for Android/touchscreen targets.
@@ -65,6 +65,8 @@ std::vector<Control> layout(int w, int h, const double inset[4], const bool* sho
         {GP_SELECT, (x0 + x1) / 2 - 0.09 * s, sy, 0.045 * s * pad.sizeScale, "SEL"},
         {GP_START, (x0 + x1) / 2 + 0.09 * s, sy, 0.045 * s * pad.sizeScale, "START"},
         {GP_BUTTON_COUNT, x0 + m + 0.36 * s, y1 - m - 0.075 * s, rb * 0.82, "FLASH"},
+        {GP_BUTTON_COUNT + 1, x0 + m + 0.49 * s, y1 - m - 0.075 * s, rb * 0.82, "I+"},
+        {GP_BUTTON_COUNT + 2, x0 + m + 0.62 * s, y1 - m - 0.075 * s, rb * 0.82, "I-"},
     };
     for (auto& c : all) {
         if (c.button >= 0 && pad.custom[c.button]) {
@@ -75,7 +77,7 @@ std::vector<Control> layout(int w, int h, const double inset[4], const bool* sho
     if (!shown) return all;
     std::vector<Control> result;
     for (auto& c : all)
-        if (c.button == GP_BUTTON_COUNT || shown[c.button]) result.push_back(c);
+        if (c.button >= GP_BUTTON_COUNT || shown[c.button]) result.push_back(c);
     return result;
 }
 
@@ -88,6 +90,16 @@ void sendFlashlightKey(bool down) {
     ev.key.keysym.scancode = SDL_SCANCODE_F;
     ev.key.keysym.sym = SDLK_f;
     ev.key.keysym.mod = KMOD_NONE;
+    SDL_PushEvent(&ev);
+}
+
+void sendItemWheel(int direction) {
+    SDL_Event ev{};
+    ev.type = SDL_MOUSEWHEEL;
+    ev.wheel.type = SDL_MOUSEWHEEL;
+    ev.wheel.x = 0;
+    ev.wheel.y = direction;
+    ev.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
     SDL_PushEvent(&ev);
 }
 
@@ -120,7 +132,7 @@ void TouchPad::loadLayout() {
     int button = 0;
     double x = 0, y = 0;
     while (std::fscanf(f, "%d %lf %lf", &button, &x, &y) == 3) {
-        if (button >= 0 && button <= GP_BUTTON_COUNT && x >= 0 && x <= 1 && y >= 0 && y <= 1) {
+        if (button >= 0 && button <= GP_BUTTON_COUNT + 2 && x >= 0 && x <= 1 && y >= 0 && y <= 1) {
             custom[button] = true;
             customX[button] = x;
             customY[button] = y;
@@ -137,7 +149,7 @@ void TouchPad::saveLayout() {
     FILE* f = std::fopen(path.c_str(), "w");
     if (!f) return;
     std::fprintf(f, "%.4f\n", sizeScale);
-    for (int i = 0; i < GP_BUTTON_COUNT + 1; ++i)
+    for (int i = 0; i < GP_BUTTON_COUNT + 3; ++i)
         if (custom[i]) std::fprintf(f, "%d %.6f %.6f\n", i, customX[i], customY[i]);
     std::fclose(f);
 }
@@ -194,28 +206,30 @@ bool TouchPad::handleFinger(const SDL_TouchFingerEvent& e, Runner& rt, int w, in
         if (c >= 0) f->control = c;
     }
 
-    bool want[GP_BUTTON_COUNT + 1] = {};
+    bool want[GP_BUTTON_COUNT + 3] = {};
     for (auto& fi : fingers) {
         if (!fi.used) continue;
         const Control& c = cs[static_cast<size_t>(fi.control)];
         want[c.button] = true;
     }
-    for (int b = 0; b < GP_BUTTON_COUNT + 1; ++b)
+    for (int b = 0; b < GP_BUTTON_COUNT + 3; ++b)
         if (want[b] != down[b]) {
             down[b] = want[b];
             if (b == GP_BUTTON_COUNT) sendFlashlightKey(want[b]);
-            else if (buttons) buttons->press(rt, Buttons::kOnScreen, b, want[b]);
+            else if (b == GP_BUTTON_COUNT + 1 && want[b]) sendItemWheel(1);
+            else if (b == GP_BUTTON_COUNT + 2 && want[b]) sendItemWheel(-1);
+            else if (b < GP_BUTTON_COUNT && buttons) buttons->press(rt, Buttons::kOnScreen, b, want[b]);
         }
     return true;
 }
 
 void TouchPad::releaseAll(Runner& rt) {
     for (auto& f : fingers) f.used = false;
-    for (int b = 0; b < GP_BUTTON_COUNT + 1; ++b)
+    for (int b = 0; b < GP_BUTTON_COUNT + 3; ++b)
         if (down[b]) {
             down[b] = false;
             if (b == GP_BUTTON_COUNT) sendFlashlightKey(false);
-            else if (buttons) buttons->press(rt, Buttons::kOnScreen, b, false);
+            else if (b < GP_BUTTON_COUNT && buttons) buttons->press(rt, Buttons::kOnScreen, b, false);
         }
 }
 
